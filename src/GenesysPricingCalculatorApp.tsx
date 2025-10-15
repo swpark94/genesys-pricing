@@ -24,6 +24,13 @@ const fmtKRW = (n: number, rate: number) =>
     maximumFractionDigits: 0,
   }).format(Math.round((n || 0) * rate));
 
+const fmtKRWwon = (n: number) =>
+  new Intl.NumberFormat("ko-KR", {
+    style: "currency",
+    currency: "KRW",
+    maximumFractionDigits: 0,
+  }).format(Math.round(n || 0));
+
 /* ============================ Genesys 상수 ============================ */
 const UNIT = {
   callbotPerMinuteUSD: 0.06,
@@ -33,7 +40,10 @@ const UNIT = {
 } as const;
 
 const STT_FREE_MIN_PER_SEAT: Record<"CX1" | "CX2" | "CX3" | "CX4", number> = {
-  CX1: 100, CX2: 100, CX3: 1500, CX4: 3000,
+  CX1: 100,
+  CX2: 100,
+  CX3: 1500,
+  CX4: 3000,
 };
 const ADDON_STT_MIN_PER_PACK = 1400;
 
@@ -43,8 +53,30 @@ const AWS_RATE = {
   voicePerMinuteUSD: 0.038,
 };
 
+/* ============================ ECP-AI 상수(월) ============================ */
+const ECP_UNIT_KRW = {
+  callbotPerChannel: 110_000,
+  chatbotPerChannel: 50_000,
+  advisorPerSeat: 70_000,
+  taPerSeat: 25_000,
+  qaPerSeat: 25_000,
+  kmsPerSeat: 25_000,
+  sttPerChannel: 15_000,
+  ttsPerChannel: 20_000,
+} as const;
+
 /* ============================ 메인 앱 ============================ */
 export default function PricingApp() {
+  // 전역 연동 입력
+  const [globalChatbotChannels, setGlobalChatbotChannels] = useState<number | undefined>(undefined);
+  const [globalCallbotChannels, setGlobalCallbotChannels] = useState<number | undefined>(undefined);
+  const [globalAdvisorSeats, setGlobalAdvisorSeats] = useState<number | undefined>(undefined);
+
+  // 상단 합계(원) – 자식 계산기에서 실시간 업데이트
+  const [gTotalKRW, setGTotalKRW] = useState(0);
+  const [aTotalKRW, setATotalKRW] = useState(0);
+  const [eTotalKRW, setETotalKRW] = useState(0);
+
   return (
     <div style={page()}>
       {/* ── 상단 공통: 구글 시트 링크 바 ── */}
@@ -61,12 +93,65 @@ export default function PricingApp() {
         </a>
       </div>
 
-      <div style={grid2Col()}>
+      {/* ── 상단 2열: 좌측 입력 · 우측 합계 ── */}
+      <div style={topGrid()}>
+        {/* 좌측: 전체 입력(연동) — 폭을 조금 줄이고, 라벨 문구 변경 */}
+        <div style={{ ...container(), padding: 16 }}>
+          <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>전체 입력(연동)</h1>
+          <div style={noteBox()}>
+            여기 입력하면 아래 <b>Genesys / AWS / ECP-AI</b> 계산기의 <b>채널/좌석 수</b>가 함께 갱신됩니다.
+            (각 계산기에서 개별로 수정해도 전역값은 바뀌지 않아요)
+          </div>
+
+          <Field label="전체 챗봇 채널 수">
+            <NumberBox value={globalChatbotChannels ?? 0} onChange={setGlobalChatbotChannels} />
+          </Field>
+          <Field label="전체 콜봇 채널 수">
+            <NumberBox value={globalCallbotChannels ?? 0} onChange={setGlobalCallbotChannels} />
+          </Field>
+          <Field label="전체 어드바이저 좌석수(QA/TA/KMS 포함)">
+            <NumberBox value={globalAdvisorSeats ?? 0} onChange={setGlobalAdvisorSeats} />
+          </Field>
+        </div>
+
+        {/* 우측: 합계(원) */}
+        <div style={{ ...container(), padding: 16 }}>
+          <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>합계(월)</h1>
+          <div style={{ fontSize: 14, color: "#334155", marginBottom: 8 }}>
+            아래 섹션과 연동된 최종 월 합계를 <b>원화</b>로 바로 보여줘요. (할인/환율/마진 반영)
+          </div>
+
+          <QuickTotal label="제네시스 총합계 (원)" valueKRW={gTotalKRW} />
+          <QuickTotal label="AWS 총합계 (원)" valueKRW={aTotalKRW} />
+          <QuickTotal label="ECP-AI 총합계 (원)" valueKRW={eTotalKRW} />
+        </div>
+      </div>
+
+      {/* 3열 그리드 */}
+      <div style={grid3Col()}>
         <div style={container()}>
-          <GenesysCalculator />
+          <GenesysCalculator
+            linkedChatbotChannels={globalChatbotChannels}
+            linkedCallbotChannels={globalCallbotChannels}
+            linkedAdvisorSeats={globalAdvisorSeats}
+            onTotalKRWChange={setGTotalKRW}
+          />
         </div>
         <div style={container()}>
-          <AwsCalculator />
+          <AwsCalculator
+            linkedChatbotChannels={globalChatbotChannels}
+            linkedCallbotChannels={globalCallbotChannels}
+            linkedAdvisorSeats={globalAdvisorSeats}
+            onTotalKRWChange={setATotalKRW}
+          />
+        </div>
+        <div style={container()}>
+          <EcpAiCalculator
+            linkedChatbotChannels={globalChatbotChannels}
+            linkedCallbotChannels={globalCallbotChannels}
+            linkedAdvisorSeats={globalAdvisorSeats}
+            onTotalKRWChange={setETotalKRW}
+          />
         </div>
       </div>
     </div>
@@ -74,17 +159,28 @@ export default function PricingApp() {
 }
 
 /* ============================ Genesys 계산기 ============================ */
-function GenesysCalculator() {
+function GenesysCalculator(props: {
+  linkedChatbotChannels?: number;
+  linkedCallbotChannels?: number;
+  linkedAdvisorSeats?: number;
+  onTotalKRWChange?: (krw: number) => void;
+}) {
   // 최상단: 할인/환율
   const [discountRate, setDiscountRate] = useState(0);
   const [exchangeRate, setExchangeRate] = useState(1400);
 
-  // CX 패키지 가격 설정(동적 반영)
+  // CX 패키지 가격/무료토큰 (동적)
   const [pkgPrice, setPkgPrice] = useState<Record<"CX1" | "CX2" | "CX3" | "CX4", number>>({
-    CX1: 75, CX2: 115, CX3: 155, CX4: 240,
+    CX1: 75,
+    CX2: 115,
+    CX3: 155,
+    CX4: 240,
   });
   const [pkgFreeToken, setPkgFreeToken] = useState<Record<"CX1" | "CX2" | "CX3" | "CX4", number>>({
-    CX1: 0, CX2: 0, CX3: 0, CX4: 30,
+    CX1: 0,
+    CX2: 0,
+    CX3: 0,
+    CX4: 30,
   });
 
   // 일반 입력
@@ -93,21 +189,33 @@ function GenesysCalculator() {
 
   // 챗봇
   const [chatbotChannels, setChatbotChannels] = useState(0);
-  const [chatbotAvgSessionPerDay, setChatbotAvgSessionPerDay] = useState(0);
+  const [chatbotConsultsPerDay, setChatbotConsultsPerDay] = useState(100);
+  const [chatbotSessionsPerConsult, setChatbotSessionsPerConsult] = useState(5);
   const [daysChatbotPerMonth, setDaysChatbotPerMonth] = useState(25);
 
   // 콜봇
   const [callbotChannels, setCallbotChannels] = useState(0);
-  const [callbotAvgCallMin, setCallbotAvgCallMin] = useState(0);
-  const [callbotAnsweredPerDay, setCallbotAnsweredPerDay] = useState(0);
+  const [callbotAvgCallMin, setCallbotAvgCallMin] = useState(3);
+  const [callbotAnsweredPerDay, setCallbotAnsweredPerDay] = useState(100);
   const [daysCallbotPerMonth, setDaysCallbotPerMonth] = useState(25);
 
-  // 어드바이저 (요청대로 기본 0)
+  // 어드바이저
   const [advisors, setAdvisors] = useState(0);
-  const [advisorAvgCallMin, setAdvisorAvgCallMin] = useState(0);
-  const [advisorAnsweredPerDay, setAdvisorAnsweredPerDay] = useState(0);
+  const [advisorAvgCallMin, setAdvisorAvgCallMin] = useState(3);
+  const [advisorAnsweredPerDay, setAdvisorAnsweredPerDay] = useState(100);
   const [daysAdvisorPerMonth, setDaysAdvisorPerMonth] = useState(22);
   const [advisorTokensMonthlyInput, setAdvisorTokensMonthlyInput] = useState(0);
+
+  // 전역 → 로컬 동기화
+  useEffect(() => {
+    if (props.linkedChatbotChannels !== undefined) setChatbotChannels(props.linkedChatbotChannels);
+  }, [props.linkedChatbotChannels]);
+  useEffect(() => {
+    if (props.linkedCallbotChannels !== undefined) setCallbotChannels(props.linkedCallbotChannels);
+  }, [props.linkedCallbotChannels]);
+  useEffect(() => {
+    if (props.linkedAdvisorSeats !== undefined) setAdvisors(props.linkedAdvisorSeats);
+  }, [props.linkedAdvisorSeats]);
 
   const pricePerSeat = pkgPrice[cxPackage];
   const freeSTTPerSeat = STT_FREE_MIN_PER_SEAT[cxPackage];
@@ -116,14 +224,18 @@ function GenesysCalculator() {
   const calc = useMemo(() => {
     const advisorSubMonthly = advisors * pricePerSeat;
 
-    const chatbotSessionsMonthly = chatbotChannels * chatbotAvgSessionPerDay * daysChatbotPerMonth;
+    const chatbotSessionsMonthly =
+      chatbotChannels * chatbotConsultsPerDay * chatbotSessionsPerConsult * daysChatbotPerMonth;
     const chatbotMonthly = chatbotSessionsMonthly * UNIT.chatbotPerSessionUSD;
 
-    const callbotMinutesMonthly = callbotChannels * callbotAnsweredPerDay * callbotAvgCallMin * daysCallbotPerMonth;
+    const callbotMinutesMonthly =
+      callbotChannels * callbotAnsweredPerDay * callbotAvgCallMin * daysCallbotPerMonth;
     const callbotMonthly = callbotMinutesMonthly * UNIT.callbotPerMinuteUSD;
 
-    const advisorSTTMinutesMonthly = advisors * advisorAnsweredPerDay * advisorAvgCallMin * daysAdvisorPerMonth;
-    const freeSTTMinutesMonthly = advisors * freeSTTPerSeat + sttAddOnPacks * ADDON_STT_MIN_PER_PACK;
+    const advisorSTTMinutesMonthly =
+      advisors * advisorAnsweredPerDay * advisorAvgCallMin * daysAdvisorPerMonth;
+    const freeSTTMinutesMonthly =
+      advisors * freeSTTPerSeat + sttAddOnPacks * ADDON_STT_MIN_PER_PACK;
     const sttBillableMinutes = Math.max(0, advisorSTTMinutesMonthly - freeSTTMinutesMonthly);
     const sttMonthly = sttBillableMinutes * UNIT.advisorSTTPerMinuteUSD;
 
@@ -136,7 +248,8 @@ function GenesysCalculator() {
     const unusedTokenCreditUSD = unusedFreeTokens * UNIT.advisorTokenPerEachUSD;
 
     const advisorUsageMonthly = sttMonthly + tokenMonthly;
-    const preCreditTotal = advisorSubMonthly + chatbotMonthly + callbotMonthly + advisorUsageMonthly;
+    const preCreditTotal =
+      advisorSubMonthly + chatbotMonthly + callbotMonthly + advisorUsageMonthly;
     const preDiscountTotal = Math.max(0, preCreditTotal - unusedTokenCreditUSD);
 
     const discount = Math.max(0, Math.min(100, discountRate));
@@ -154,27 +267,52 @@ function GenesysCalculator() {
       grandTotalMonthly,
     };
   }, [
-    advisors, pricePerSeat,
-    chatbotChannels, chatbotAvgSessionPerDay, daysChatbotPerMonth,
-    callbotChannels, callbotAvgCallMin, callbotAnsweredPerDay, daysCallbotPerMonth,
-    advisorAvgCallMin, advisorAnsweredPerDay, daysAdvisorPerMonth,
-    freeSTTPerSeat, sttAddOnPacks, freeTokenPerSeat,
-    advisorTokensMonthlyInput, discountRate,
+    advisors,
+    pricePerSeat,
+    chatbotChannels,
+    chatbotConsultsPerDay,
+    chatbotSessionsPerConsult,
+    daysChatbotPerMonth,
+    callbotChannels,
+    callbotAvgCallMin,
+    callbotAnsweredPerDay,
+    daysCallbotPerMonth,
+    advisorAvgCallMin,
+    advisorAnsweredPerDay,
+    daysAdvisorPerMonth,
+    freeSTTPerSeat,
+    sttAddOnPacks,
+    freeTokenPerSeat,
+    advisorTokensMonthlyInput,
+    discountRate,
   ]);
+
+  // 상단 합계(원) 업데이트
+  useEffect(() => {
+    props.onTotalKRWChange?.(Math.round(calc.grandTotalMonthly * exchangeRate));
+  }, [calc.grandTotalMonthly, exchangeRate]);
 
   return (
     <>
-      {/* ── 타이틀 + 링크 팝오버 ── */}
+      {/* 타이틀 + 링크 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h1 style={{ ...title(), marginBottom: 0 }}>Genesys CCaaS 요금 계산기</h1>
         <HelpTip title="관련 자료">
           <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <a href="https://help.mypurecloud.com/articles/genesys-cloud-tokens-based-pricing-model/"
-               target="_blank" rel="noreferrer noopener" style={link()}>
+            <a
+              href="https://help.mypurecloud.com/articles/genesys-cloud-tokens-based-pricing-model/"
+              target="_blank"
+              rel="noreferrer noopener"
+              style={link()}
+            >
               Genesys Cloud Tokens-based Pricing Model
             </a>
-            <a href="https://www.genesys.com/pricing"
-               target="_blank" rel="noreferrer noopener" style={link()}>
+            <a
+              href="https://www.genesys.com/pricing"
+              target="_blank"
+              rel="noreferrer noopener"
+              style={link()}
+            >
               Genesys Pricing
             </a>
             <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
@@ -183,14 +321,25 @@ function GenesysCalculator() {
       </div>
 
       {/* 최상단: 할인/환율 */}
-      <Field label="할인율(%)"><NumberBox value={discountRate} onChange={setDiscountRate} allowFloat /></Field>
-      <Field label="환율 (USD→KRW)"><NumberBox value={exchangeRate} onChange={setExchangeRate} allowFloat /></Field>
+      <Field label="할인율(%)">
+        <NumberBox value={discountRate} onChange={setDiscountRate} allowFloat />
+      </Field>
+      <Field label="환율 (USD→KRW)">
+        <NumberBox value={exchangeRate} onChange={setExchangeRate} allowFloat />
+      </Field>
 
-      {/* CX 패키지 가격 설정 + 오른쪽 HelpTip(텍스트 안내만) */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      {/* 패키지 가격/무료토큰 설정 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <h2 style={{ ...subtitle(), marginTop: 18, marginBottom: 0 }}>CX 패키지 가격 설정</h2>
-          {/* ✅ 텍스트 안내만 있는 팝오버 */}
           <HelpTip title="무료 제공 안내" placement="right">
             <div style={{ fontSize: 13, lineHeight: 1.6 }}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>무료 제공 토큰</div>
@@ -216,11 +365,11 @@ function GenesysCalculator() {
           key={p}
           style={{
             display: "grid",
-            // [코드][구독료 라벨][구독료 입력][무료토큰 라벨][무료토큰 입력]
-            gridTemplateColumns: "64px 140px 120px 140px 120px",
+            gridTemplateColumns: "64px 160px 1fr 160px 1fr",
             gap: 10,
             alignItems: "center",
             marginTop: 10,
+            overflow: "visible",
           }}
         >
           <span style={{ fontSize: 14, color: "#111", fontWeight: 700 }}>{p}</span>
@@ -229,20 +378,18 @@ function GenesysCalculator() {
             value={pkgPrice[p]}
             onChange={(v) => setPkgPrice((prev) => ({ ...prev, [p]: Math.max(0, v) }))}
             allowFloat
-            width={120}
           />
           <span style={miniLabel()}>무료 토큰(개/석)</span>
           <NumberBox
             value={pkgFreeToken[p]}
             onChange={(v) => setPkgFreeToken((prev) => ({ ...prev, [p]: Math.max(0, v) }))}
-            width={120}
           />
         </div>
       ))}
 
       <Divider />
 
-      {/* 이후 입력 */}
+      {/* 패키지 선택 + 무료토큰 결과 */}
       <Field label="CX 패키지">
         <select value={cxPackage} onChange={(e) => setCxPackage(e.target.value as any)} style={input()}>
           <option value="CX1">CX1 ({fmtUSD0(pkgPrice.CX1)}/석 · 무료토큰 {pkgFreeToken.CX1}개/석)</option>
@@ -252,47 +399,90 @@ function GenesysCalculator() {
         </select>
       </Field>
 
-      <Field label="ADD-ON 팩(STT 1,400분/팩)"><NumberBox value={sttAddOnPacks} onChange={setSttAddOnPacks} /></Field>
-      <Field label="상담사 수(석)"><NumberBox value={advisors} onChange={setAdvisors} /></Field>
-      <Field label="무료 토큰(자동)"><ReadonlyBox value={`${calc.freeTokensMonthly.toLocaleString()} 개`} /></Field>
+      <Field label="ADD-ON 팩(STT 1,400분/팩)">
+        <NumberBox value={sttAddOnPacks} onChange={setSttAddOnPacks} />
+      </Field>
+      <Field label="상담사 수(석)">
+        <NumberBox value={advisors} onChange={setAdvisors} />
+      </Field>
+      <Field label="무료 토큰(자동)">
+        <ReadonlyBox value={`${calc.freeTokensMonthly.toLocaleString()} 개`} />
+      </Field>
 
       <Divider />
 
       {/* 챗봇 */}
       <h2 style={subtitle()}>챗봇</h2>
-      <Field label="채널 수"><NumberBox value={chatbotChannels} onChange={setChatbotChannels} /></Field>
-      <Field label="채널당 하루 평균 세션"><NumberBox value={chatbotAvgSessionPerDay} onChange={setChatbotAvgSessionPerDay} /></Field>
-      <Field label="영업일(월)"><NumberBox value={daysChatbotPerMonth} onChange={setDaysChatbotPerMonth} /></Field>
-      <div style={noteBox()}>단가: {fmtUSD3(UNIT.chatbotPerSessionUSD)}/세션 · 산식 = 채널 × 하루 세션 × 영업일 × 세션단가</div>
-      <div style={sectionTotal()}>챗봇 월 비용: <b>{fmtUSD0(calc.chatbotMonthly)} ({fmtKRW(calc.chatbotMonthly, exchangeRate)})</b></div>
+      <Field label="채널 수">
+        <NumberBox value={chatbotChannels} onChange={setChatbotChannels} />
+      </Field>
+      <Field label="채널당 하루 상담수">
+        <NumberBox value={chatbotConsultsPerDay} onChange={setChatbotConsultsPerDay} />
+      </Field>
+      <Field label="상담당 세션수">
+        <NumberBox value={chatbotSessionsPerConsult} onChange={setChatbotSessionsPerConsult} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={daysChatbotPerMonth} onChange={setDaysChatbotPerMonth} />
+      </Field>
+      <div style={noteBox()}>
+        단가: {fmtUSD3(UNIT.chatbotPerSessionUSD)}/세션 · 산식 = 채널 × 하루 상담수 × 상담당 세션수 × 영업일 × 세션단가
+      </div>
+      <div style={sectionTotal()}>
+        챗봇 월 비용: <b>{fmtUSD0(calc.chatbotMonthly)} ({fmtKRW(calc.chatbotMonthly, exchangeRate)})</b>
+      </div>
 
       <Divider />
 
       {/* 콜봇 */}
       <h2 style={subtitle()}>콜봇</h2>
-      <Field label="채널 수"><NumberBox value={callbotChannels} onChange={setCallbotChannels} /></Field>
-      <Field label="채널당 평균 통화시간(분)"><NumberBox value={callbotAvgCallMin} onChange={setCallbotAvgCallMin} allowFloat /></Field>
-      <Field label="채널당 하루 응답 콜수"><NumberBox value={callbotAnsweredPerDay} onChange={setCallbotAnsweredPerDay} /></Field>
-      <Field label="영업일(월)"><NumberBox value={daysCallbotPerMonth} onChange={setDaysCallbotPerMonth} /></Field>
-      <div style={noteBox()}>단가: {fmtUSD3(UNIT.callbotPerMinuteUSD)}/분 · 산식 = 채널 × 하루 응답 × 평균 통화분 × 영업일 × 분당 단가</div>
-      <div style={sectionTotal()}>콜봇 월 비용: <b>{fmtUSD0(calc.callbotMonthly)} ({fmtKRW(calc.callbotMonthly, exchangeRate)})</b></div>
+      <Field label="채널 수">
+        <NumberBox value={callbotChannels} onChange={setCallbotChannels} />
+      </Field>
+      <Field label="채널당 평균 통화시간(분)">
+        <NumberBox value={callbotAvgCallMin} onChange={setCallbotAvgCallMin} allowFloat />
+      </Field>
+      <Field label="채널당 하루 응답 콜수">
+        <NumberBox value={callbotAnsweredPerDay} onChange={setCallbotAnsweredPerDay} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={daysCallbotPerMonth} onChange={setDaysCallbotPerMonth} />
+      </Field>
+      <div style={noteBox()}>
+        단가: {fmtUSD3(UNIT.callbotPerMinuteUSD)}/분 · 산식 = 채널 × 하루 응답 × 평균 통화분 × 영업일 × 분당 단가
+      </div>
+      <div style={sectionTotal()}>
+        콜봇 월 비용: <b>{fmtUSD0(calc.callbotMonthly)} ({fmtKRW(calc.callbotMonthly, exchangeRate)})</b>
+      </div>
 
       <Divider />
 
       {/* 어드바이저 */}
       <h2 style={subtitle()}>어드바이저</h2>
-      <Field label="상담사당 평균 통화시간(분)"><NumberBox value={advisorAvgCallMin} onChange={setAdvisorAvgCallMin} allowFloat /></Field>
-      <Field label="상담사당 하루 응답 콜수"><NumberBox value={advisorAnsweredPerDay} onChange={setAdvisorAnsweredPerDay} /></Field>
-      <Field label="영업일(월)"><NumberBox value={daysAdvisorPerMonth} onChange={setDaysAdvisorPerMonth} /></Field>
-      <Field label="어드바이저 월 사용 토큰(개)"><NumberBox value={advisorTokensMonthlyInput} onChange={setAdvisorTokensMonthlyInput} /></Field>
+      <Field label="상담사당 평균 통화시간(분)">
+        <NumberBox value={advisorAvgCallMin} onChange={setAdvisorAvgCallMin} allowFloat />
+      </Field>
+      <Field label="상담사당 하루 응답 콜수">
+        <NumberBox value={advisorAnsweredPerDay} onChange={setAdvisorAnsweredPerDay} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={daysAdvisorPerMonth} onChange={setDaysAdvisorPerMonth} />
+      </Field>
+      <Field label="어드바이저 월 사용 토큰(개)">
+        <NumberBox value={advisorTokensMonthlyInput} onChange={setAdvisorTokensMonthlyInput} />
+      </Field>
       <div style={noteBox()}>
-        STT 단가: {fmtUSD3(UNIT.advisorSTTPerMinuteUSD)}/분 · STT 산식 = 좌석 × 하루 콜 × 평균 통화분 × 영업일 − (무료 구독 STT + 무료 ADD-ON STT)<br/>
-        토큰 단가: {fmtUSD3(UNIT.advisorTokenPerEachUSD)}/개 · 토큰 산식 = (입력 토큰 − 무료 토큰)⁺<br/>
+        STT 단가: {fmtUSD3(UNIT.advisorSTTPerMinuteUSD)}/분 · STT 산식 = 좌석 × 하루 콜 × 평균 통화분 × 영업일 − (무료 구독 STT + 무료 ADD-ON STT)
+        <br />
+        토큰 단가: {fmtUSD3(UNIT.advisorTokenPerEachUSD)}/개 · 토큰 산식 = (입력 토큰 − 무료 토큰)⁺
+        <br />
         <span style={{ color: "#0a58ca", fontWeight: 700 }}>
           미사용 무료 토큰 크레딧: {calc.unusedFreeTokens.toLocaleString()} 개 → {fmtUSD0(calc.unusedTokenCreditUSD)} 총합계에서 차감
         </span>
       </div>
-      <div style={sectionTotal()}>어드바이저 월 비용(STT+토큰): <b>{fmtUSD0(calc.advisorUsageMonthly)} ({fmtKRW(calc.advisorUsageMonthly, exchangeRate)})</b></div>
+      <div style={sectionTotal()}>
+        어드바이저 월 비용(STT+토큰): <b>{fmtUSD0(calc.advisorUsageMonthly)} ({fmtKRW(calc.advisorUsageMonthly, exchangeRate)})</b>
+      </div>
 
       <Divider />
 
@@ -308,24 +498,40 @@ function GenesysCalculator() {
 }
 
 /* ============================ AWS 계산기 ============================ */
-function AwsCalculator() {
+function AwsCalculator(props: {
+  linkedChatbotChannels?: number;
+  linkedCallbotChannels?: number;
+  linkedAdvisorSeats?: number;
+  onTotalKRWChange?: (krw: number) => void;
+}) {
   const [awsRate, setAwsRate] = useState(1400);
   const [discountRate, setDiscountRate] = useState(0);
 
   const [cbtChannels, setCbtChannels] = useState(0);
-  const [cbtConsultsPerDay, setCbtConsultsPerDay] = useState(0);
-  const [cbtSessionsPerConsult, setCbtSessionsPerConsult] = useState(0);
+  const [cbtConsultsPerDay, setCbtConsultsPerDay] = useState(100);
+  const [cbtSessionsPerConsult, setCbtSessionsPerConsult] = useState(5);
   const [cbtDays, setCbtDays] = useState(25);
 
   const [clbChannels, setClbChannels] = useState(0);
-  const [clbConsultsPerDay, setClbConsultsPerDay] = useState(0);
-  const [clbAvgMinutes, setClbAvgMinutes] = useState(0);
+  const [clbConsultsPerDay, setClbConsultsPerDay] = useState(100);
+  const [clbAvgMinutes, setClbAvgMinutes] = useState(3);
   const [clbDays, setClbDays] = useState(25);
 
   const [advChannels, setAdvChannels] = useState(0);
-  const [advConsultsPerDay, setAdvConsultsPerDay] = useState(0);
-  const [advAvgMinutes, setAdvAvgMinutes] = useState(0);
+  const [advConsultsPerDay, setAdvConsultsPerDay] = useState(100);
+  const [advAvgMinutes, setAdvAvgMinutes] = useState(3);
   const [advDays, setAdvDays] = useState(22);
+
+  // 전역 → 로컬 동기화 (기존 유지)
+  useEffect(() => {
+    if (props.linkedChatbotChannels !== undefined) setCbtChannels(props.linkedChatbotChannels);
+  }, [props.linkedChatbotChannels]);
+  useEffect(() => {
+    if (props.linkedCallbotChannels !== undefined) setClbChannels(props.linkedCallbotChannels);
+  }, [props.linkedCallbotChannels]);
+  useEffect(() => {
+    if (props.linkedAdvisorSeats !== undefined) setAdvChannels(props.linkedAdvisorSeats);
+  }, [props.linkedAdvisorSeats]);
 
   const calc = useMemo(() => {
     const chatbotSessionsMonthly = cbtChannels * cbtConsultsPerDay * cbtSessionsPerConsult * cbtDays;
@@ -343,24 +549,43 @@ function AwsCalculator() {
 
     return { chatbotUSD, callbotUSD, advisorUSD, preDiscountTotal, totalUSD };
   }, [
-    cbtChannels, cbtConsultsPerDay, cbtSessionsPerConsult, cbtDays,
-    clbChannels, clbConsultsPerDay, clbAvgMinutes, clbDays,
-    advChannels, advConsultsPerDay, advAvgMinutes, advDays,
+    cbtChannels,
+    cbtConsultsPerDay,
+    cbtSessionsPerConsult,
+    cbtDays,
+    clbChannels,
+    clbConsultsPerDay,
+    clbAvgMinutes,
+    clbDays,
+    advChannels,
+    advConsultsPerDay,
+    advAvgMinutes,
+    advDays,
     discountRate,
   ]);
+
+  // 상단 합계(원) 업데이트
+  useEffect(() => {
+    props.onTotalKRWChange?.(Math.round(calc.totalUSD * awsRate));
+  }, [calc.totalUSD, awsRate]);
 
   const usd = (n: number) => fmtUSD0(n);
   const krw = (n: number) => fmtKRW(n, awsRate);
 
   return (
     <>
-      {/* ── 타이틀 + 링크 팝오버 ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h1 style={{ ...title(), marginBottom: 0 }}>AWS CCaaS 요금 계산기 (all-inclusive 기준)</h1>
+        <h1 style={{ ...title(), marginBottom: 0 }}>
+          AWS CCaaS 요금 계산기 (all-inclusive 기준)
+        </h1>
         <HelpTip title="관련 자료">
           <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <a href="https://aws.amazon.com/ko/connect/pricing/"
-               target="_blank" rel="noreferrer noopener" style={link()}>
+            <a
+              href="https://aws.amazon.com/ko/connect/pricing/"
+              target="_blank"
+              rel="noreferrer noopener"
+              style={link()}
+            >
               Amazon Connect Pricing
             </a>
             <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
@@ -368,38 +593,78 @@ function AwsCalculator() {
         </HelpTip>
       </div>
 
-      <Field label="할인율(%)"><NumberBox value={discountRate} onChange={setDiscountRate} allowFloat /></Field>
-      <Field label="환율 (USD→KRW)"><NumberBox value={awsRate} onChange={setAwsRate} allowFloat /></Field>
+      <Field label="할인율(%)">
+        <NumberBox value={discountRate} onChange={setDiscountRate} allowFloat />
+      </Field>
+      <Field label="환율 (USD→KRW)">
+        <NumberBox value={awsRate} onChange={setAwsRate} allowFloat />
+      </Field>
 
       <Divider />
 
       <h2 style={subtitle()}>챗봇</h2>
-      <Field label="채널 수"><NumberBox value={cbtChannels} onChange={setCbtChannels} /></Field>
-      <Field label="채널당 하루 상담수"><NumberBox value={cbtConsultsPerDay} onChange={setCbtConsultsPerDay} /></Field>
-      <Field label="상담당 세션수"><NumberBox value={cbtSessionsPerConsult} onChange={setCbtSessionsPerConsult} /></Field>
-      <Field label="영업일(월)"><NumberBox value={cbtDays} onChange={setCbtDays} /></Field>
-      <div style={noteBox()}>단가: {fmtUSD3(AWS_RATE.chatbotPerSessionUSD)} /세션 · 산식 = 채널 × 하루 상담수 × 상담당 세션수 × 영업일 × 세션단가</div>
-      <div style={sectionTotal()}>챗봇 월 비용: <b>{usd(calc.chatbotUSD)} ({krw(calc.chatbotUSD)})</b></div>
+      <Field label="채널 수">
+        <NumberBox value={cbtChannels} onChange={setCbtChannels} />
+      </Field>
+      <Field label="채널당 하루 상담수">
+        <NumberBox value={cbtConsultsPerDay} onChange={setCbtConsultsPerDay} />
+      </Field>
+      <Field label="상담당 세션수">
+        <NumberBox value={cbtSessionsPerConsult} onChange={setCbtSessionsPerConsult} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={cbtDays} onChange={setCbtDays} />
+      </Field>
+      <div style={noteBox()}>
+        단가: {fmtUSD3(AWS_RATE.chatbotPerSessionUSD)} /세션 · 산식 = 채널 × 하루 상담수 × 상담당 세션수 × 영업일 × 세션단가
+      </div>
+      <div style={sectionTotal()}>
+        챗봇 월 비용: <b>{usd(calc.chatbotUSD)} ({krw(calc.chatbotUSD)})</b>
+      </div>
 
       <Divider />
 
       <h2 style={subtitle()}>콜봇</h2>
-      <Field label="채널 수"><NumberBox value={clbChannels} onChange={setClbChannels} /></Field>
-      <Field label="채널당 하루 상담수"><NumberBox value={clbConsultsPerDay} onChange={setClbConsultsPerDay} /></Field>
-      <Field label="상담당 평균 통화시간(분)"><NumberBox value={clbAvgMinutes} onChange={setClbAvgMinutes} /></Field>
-      <Field label="영업일(월)"><NumberBox value={clbDays} onChange={setClbDays} /></Field>
-      <div style={noteBox()}>단가: {fmtUSD3(AWS_RATE.voicePerMinuteUSD)} /분 · 산식 = 채널 × 하루 상담수 × 상담당 평균 통화시간 × 영업일 × 분당 단가</div>
-      <div style={sectionTotal()}>콜봇 월 비용: <b>{usd(calc.callbotUSD)} ({krw(calc.callbotUSD)})</b></div>
+      <Field label="채널 수">
+        <NumberBox value={clbChannels} onChange={setClbChannels} />
+      </Field>
+      <Field label="채널당 하루 상담수">
+        <NumberBox value={clbConsultsPerDay} onChange={setClbConsultsPerDay} />
+      </Field>
+      <Field label="상담당 평균 통화시간(분)">
+        <NumberBox value={clbAvgMinutes} onChange={setClbAvgMinutes} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={clbDays} onChange={setClbDays} />
+      </Field>
+      <div style={noteBox()}>
+        단가: {fmtUSD3(AWS_RATE.voicePerMinuteUSD)} /분 · 산식 = 채널 × 하루 상담수 × 상담당 평균 통화시간 × 영업일 × 분당 단가
+      </div>
+      <div style={sectionTotal()}>
+        콜봇 월 비용: <b>{usd(calc.callbotUSD)} ({krw(calc.callbotUSD)})</b>
+      </div>
 
       <Divider />
 
       <h2 style={subtitle()}>어드바이저</h2>
-      <Field label="채널 수"><NumberBox value={advChannels} onChange={setAdvChannels} /></Field>
-      <Field label="채널당 하루 상담수"><NumberBox value={advConsultsPerDay} onChange={setAdvConsultsPerDay} /></Field>
-      <Field label="상담당 평균 통화시간(분)"><NumberBox value={advAvgMinutes} onChange={setAdvAvgMinutes} /></Field>
-      <Field label="영업일(월)"><NumberBox value={advDays} onChange={setAdvDays} /></Field>
-      <div style={noteBox()}>단가: {fmtUSD3(AWS_RATE.voicePerMinuteUSD)} /분 · 산식 = 채널 × 하루 상담수 × 상담당 평균 통화시간 × 영업일 × 분당 단가</div>
-      <div style={sectionTotal()}>어드바이저 월 비용: <b>{usd(calc.advisorUSD)} ({krw(calc.advisorUSD)})</b></div>
+      <Field label="채널 수">
+        <NumberBox value={advChannels} onChange={setAdvChannels} />
+      </Field>
+      <Field label="채널당 하루 상담수">
+        <NumberBox value={advConsultsPerDay} onChange={setAdvConsultsPerDay} />
+      </Field>
+      <Field label="상담당 평균 통화시간(분)">
+        <NumberBox value={advAvgMinutes} onChange={setAdvAvgMinutes} />
+      </Field>
+      <Field label="영업일(월)">
+        <NumberBox value={advDays} onChange={setAdvDays} />
+      </Field>
+      <div style={noteBox()}>
+        단가: {fmtUSD3(AWS_RATE.voicePerMinuteUSD)} /분 · 산식 = 채널 × 하루 상담수 × 상담당 평균 통화시간 × 영업일 × 분당 단가
+      </div>
+      <div style={sectionTotal()}>
+        어드바이저 월 비용: <b>{usd(calc.advisorUSD)} ({krw(calc.advisorUSD)})</b>
+      </div>
 
       <Divider />
 
@@ -408,6 +673,239 @@ function AwsCalculator() {
         <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6, color: "#333" }}>
           (할인 전: {usd(calc.preDiscountTotal)} / 할인율 {Math.max(0, Math.min(100, discountRate))}% 적용)
         </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================ ECP-AI 계산기 ============================ */
+function EcpAiCalculator(props: {
+  linkedChatbotChannels?: number;
+  linkedCallbotChannels?: number;
+  linkedAdvisorSeats?: number;
+  onTotalKRWChange?: (krw: number) => void;
+}) {
+  // 수량
+  const [chatbotCh, setChatbotCh] = useState(0); // ① 챗봇
+  const [callbotCh, setCallbotCh] = useState(0); // ② 콜봇
+  const [advisorSeat, setAdvisorSeat] = useState(0); // ③ 어드바이저
+  const [taSeat, setTaSeat] = useState(0);
+  const [qaSeat, setQaSeat] = useState(0);
+  const [kmsSeat, setKmsSeat] = useState(0);
+  const [sttCh, setSttCh] = useState(0);
+  const [ttsCh, setTtsCh] = useState(0);
+
+  // 전역 → 로컬 동기화
+  useEffect(() => {
+    if (props.linkedChatbotChannels !== undefined) setChatbotCh(props.linkedChatbotChannels);
+  }, [props.linkedChatbotChannels]);
+  useEffect(() => {
+    if (props.linkedCallbotChannels !== undefined) setCallbotCh(props.linkedCallbotChannels);
+  }, [props.linkedCallbotChannels]);
+  // 👉 변경점: 어드바이저 좌석 전역 입력 시, ECP-AI의 어드바이저/QA/TA/KMS를 모두 동일 값으로 연동
+  useEffect(() => {
+    if (props.linkedAdvisorSeats !== undefined) {
+      const v = props.linkedAdvisorSeats;
+      setAdvisorSeat(v);
+      setQaSeat(v);
+      setTaSeat(v);
+      setKmsSeat(v);
+    }
+  }, [props.linkedAdvisorSeats]);
+
+  // 항목별 할인률(%)
+  const [discChatbot, setDiscChatbot] = useState(0);
+  const [discCallbot, setDiscCallbot] = useState(0);
+  const [discAdvisor, setDiscAdvisor] = useState(0);
+  const [discTA, setDiscTA] = useState(0);
+  const [discQA, setDiscQA] = useState(0);
+  const [discKMS, setDiscKMS] = useState(0);
+  const [discSTT, setDiscSTT] = useState(0);
+  const [discTTS, setDiscTTS] = useState(0);
+
+  // 전체 할인률(%) — 변경 시 각 항목 할인률 자동 반영
+  const [globalDiscount, setGlobalDiscount] = useState(0);
+  useEffect(() => {
+    const d = clampPct(globalDiscount);
+    setDiscCallbot(d);
+    setDiscChatbot(d);
+    setDiscAdvisor(d);
+    setDiscTA(d);
+    setDiscQA(d);
+    setDiscKMS(d);
+    setDiscSTT(d);
+    setDiscTTS(d);
+  }, [globalDiscount]);
+
+  // 마진율(%) — 기본값 40
+  const [marginPct, setMarginPct] = useState(40);
+
+  // 수량별 자동 할인 (챗봇/어드바이저/QA/TA/KMS만 적용)
+  const qtyTierDiscount = (q: number) => {
+    if (!Number.isFinite(q) || q < 50) return 0;
+    if (q < 200) return 5;
+    if (q < 350) return 10;
+    if (q < 500) return 15;
+    return 15;
+  };
+  useEffect(() => setDiscChatbot(qtyTierDiscount(chatbotCh)), [chatbotCh]);
+  useEffect(() => setDiscAdvisor(qtyTierDiscount(advisorSeat)), [advisorSeat]);
+  useEffect(() => setDiscQA(qtyTierDiscount(qaSeat)), [qaSeat]);
+  useEffect(() => setDiscTA(qtyTierDiscount(taSeat)), [taSeat]);
+  useEffect(() => setDiscKMS(qtyTierDiscount(kmsSeat)), [kmsSeat]);
+  // 콜봇/STT/TTS는 자동 할인 미적용
+
+  const calc = useMemo(() => {
+    const price = (qty: number, unit: number, dPct: number) =>
+      qty * unit * (1 - clampPct(dPct) / 100);
+
+    const chatbot = price(chatbotCh, ECP_UNIT_KRW.chatbotPerChannel, discChatbot);
+    const callbot = price(callbotCh, ECP_UNIT_KRW.callbotPerChannel, discCallbot);
+    const advisor = price(advisorSeat, ECP_UNIT_KRW.advisorPerSeat, discAdvisor);
+    const ta = price(taSeat, ECP_UNIT_KRW.taPerSeat, discTA);
+    const qa = price(qaSeat, ECP_UNIT_KRW.qaPerSeat, discQA);
+    const kms = price(kmsSeat, ECP_UNIT_KRW.kmsPerSeat, discKMS);
+    const stt = price(sttCh, ECP_UNIT_KRW.sttPerChannel, discSTT);
+    const tts = price(ttsCh, ECP_UNIT_KRW.ttsPerChannel, discTTS);
+
+    const discountedSubtotal = Math.max(
+      0,
+      callbot + chatbot + advisor + ta + qa + kms + stt + tts
+    );
+
+    const m = Math.max(0, marginPct);
+    const marginAmount = Math.round(discountedSubtotal * (m / 100));
+    const grandTotal = discountedSubtotal + marginAmount;
+
+    return {
+      items: { callbot, chatbot, advisor, ta, qa, kms, stt, tts },
+      discountedSubtotal,
+      marginAmount,
+      grandTotal,
+    };
+  }, [
+    callbotCh,
+    chatbotCh,
+    advisorSeat,
+    taSeat,
+    qaSeat,
+    kmsSeat,
+    sttCh,
+    ttsCh,
+    discCallbot,
+    discChatbot,
+    discAdvisor,
+    discTA,
+    discQA,
+    discKMS,
+    discSTT,
+    discTTS,
+    marginPct,
+  ]);
+
+  // 상단 합계(원) 업데이트
+  useEffect(() => {
+    props.onTotalKRWChange?.(calc.grandTotal);
+  }, [calc.grandTotal]);
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <h1 style={{ ...title(), marginBottom: 0 }}>ECP-AI 단가 계산기</h1>
+        <HelpTip title="단가 (월)">
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            <div>콜봇: {fmtKRWwon(ECP_UNIT_KRW.callbotPerChannel)}/채널</div>
+            <div>챗봇: {fmtKRWwon(ECP_UNIT_KRW.chatbotPerChannel)}/채널</div>
+            <div>어드바이저: {fmtKRWwon(ECP_UNIT_KRW.advisorPerSeat)}/석</div>
+            <div>TA/QA/KMS: {fmtKRWwon(25_000)}/석</div>
+            <div>STT: {fmtKRWwon(ECP_UNIT_KRW.sttPerChannel)}/채널</div>
+            <div>TTS: {fmtKRWwon(ECP_UNIT_KRW.ttsPerChannel)}/채널</div>
+          </div>
+        </HelpTip>
+      </div>
+
+      {/* 전체 할인률 */}
+      <Field label="전체 할인률(%)">
+        <NumberBox value={globalDiscount} onChange={setGlobalDiscount} allowFloat />
+      </Field>
+      <div style={noteBox()}>
+        전체 할인률을 입력하면 <b>아래 모든 항목의 할인률이 동일하게 설정</b>됩니다. (개별 항목에서 다시 수정 가능)
+      </div>
+
+      <Divider />
+
+      {/* 수량 / 항목별 할인률 */}
+      <h2 style={subtitle()}>수량 / 항목별 할인률</h2>
+
+      <TwoCols label="챗봇 채널 수" rightLabel="챗봇 할인률(%)">
+        <NumberBox value={chatbotCh} onChange={setChatbotCh} />
+        <NumberBox value={discChatbot} onChange={setDiscChatbot} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="콜봇 채널 수" rightLabel="콜봇 할인률(%)">
+        <NumberBox value={callbotCh} onChange={setCallbotCh} />
+        <NumberBox value={discCallbot} onChange={setDiscCallbot} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="어드바이저 좌석 수" rightLabel="어드바이저 할인률(%)">
+        <NumberBox value={advisorSeat} onChange={setAdvisorSeat} />
+        <NumberBox value={discAdvisor} onChange={setDiscAdvisor} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="QA 좌석 수" rightLabel="QA 할인률(%)">
+        <NumberBox value={qaSeat} onChange={setQaSeat} />
+        <NumberBox value={discQA} onChange={setDiscQA} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="TA 좌석 수" rightLabel="TA 할인률(%)">
+        <NumberBox value={taSeat} onChange={setTaSeat} />
+        <NumberBox value={discTA} onChange={setDiscTA} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="KMS 좌석 수" rightLabel="KMS 할인률(%)">
+        <NumberBox value={kmsSeat} onChange={setKmsSeat} />
+        <NumberBox value={discKMS} onChange={setDiscKMS} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="STT 채널 수" rightLabel="STT 할인률(%)">
+        <NumberBox value={sttCh} onChange={setSttCh} />
+        <NumberBox value={discSTT} onChange={setDiscSTT} allowFloat />
+      </TwoCols>
+
+      <TwoCols label="TTS 채널 수" rightLabel="TTS 할인률(%)">
+        <NumberBox value={ttsCh} onChange={setTtsCh} />
+        <NumberBox value={discTTS} onChange={setDiscTTS} allowFloat />
+      </TwoCols>
+
+      <Divider />
+
+      {/* 마진율 */}
+      <Field label="마진율(%)">
+        <NumberBox value={marginPct} onChange={setMarginPct} allowFloat />
+      </Field>
+      <div style={noteBox()}>
+        마진은 <b>전체 할인 적용 후</b> 금액에 <b>추가</b>됩니다. (총액 × 마진율)
+      </div>
+
+      <Divider />
+
+      {/* 요약 */}
+      <h2 style={subtitle()}>요약</h2>
+      <Line label={`콜봇 (단가 ${fmtKRWwon(ECP_UNIT_KRW.callbotPerChannel)} /채널 · 할인 ${clampPct(discCallbot)}%)`} value={calc.items.callbot} />
+      <Line label={`챗봇 (단가 ${fmtKRWwon(ECP_UNIT_KRW.chatbotPerChannel)} /채널 · 할인 ${clampPct(discChatbot)}%)`} value={calc.items.chatbot} />
+      <Line label={`어드바이저 (단가 ${fmtKRWwon(ECP_UNIT_KRW.advisorPerSeat)} /석 · 할인 ${clampPct(discAdvisor)}%)`} value={calc.items.advisor} />
+      <Line label={`TA (단가 ${fmtKRWwon(ECP_UNIT_KRW.taPerSeat)} /석 · 할인 ${clampPct(discTA)}%)`} value={calc.items.ta} />
+      <Line label={`QA (단가 ${fmtKRWwon(ECP_UNIT_KRW.qaPerSeat)} /석 · 할인 ${clampPct(discQA)}%)`} value={calc.items.qa} />
+      <Line label={`KMS (단가 ${fmtKRWwon(ECP_UNIT_KRW.kmsPerSeat)} /석 · 할인 ${clampPct(discKMS)}%)`} value={calc.items.kms} />
+      <Line label={`STT (단가 ${fmtKRWwon(ECP_UNIT_KRW.sttPerChannel)} /채널 · 할인 ${clampPct(discSTT)}%)`} value={calc.items.stt} />
+      <Line label={`TTS (단가 ${fmtKRWwon(ECP_UNIT_KRW.ttsPerChannel)} /채널 · 할인 ${clampPct(discTTS)}%)`} value={calc.items.tts} />
+
+      <div style={resultBox()}>
+        <h2 style={{ margin: 0 }}>총 합계(월)</h2>
+        <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6, color: "#333" }}>
+          할인 적용 소계: {fmtKRWwon(calc.discountedSubtotal)} / 마진({Math.max(0, marginPct)}%): {fmtKRWwon(calc.marginAmount)}
+        </div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginTop: 8 }}>= {fmtKRWwon(calc.grandTotal)}</div>
       </div>
     </>
   );
@@ -426,11 +924,37 @@ function Field(props: { label: React.ReactNode; children: React.ReactNode }) {
   );
 }
 
+function TwoCols(props: { label: React.ReactNode; rightLabel: React.ReactNode; children: React.ReactNode[] }) {
+  const [left, right] = props.children as [React.ReactNode, React.ReactNode];
+  return (
+    <div style={twoCols()}>
+      <div style={{ display: "contents" }}>
+        <span style={twoColsLabel()}>{props.label}</span>
+        <div>{left}</div>
+      </div>
+      <div style={{ display: "contents" }}>
+        <span style={twoColsLabel()}>{props.rightLabel}</span>
+        <div>{right}</div>
+      </div>
+    </div>
+  );
+}
+
 function NumberBox({
-  value, onChange, allowFloat = false, width,
-}: { value: number; onChange: (v:number)=>void; allowFloat?: boolean; width?: number }) {
+  value,
+  onChange,
+  allowFloat = false,
+  width,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  allowFloat?: boolean;
+  width?: number;
+}) {
   const [raw, setRaw] = useState(String(value ?? ""));
-  useEffect(() => { setRaw(String(value ?? "")); }, [value]);
+  useEffect(() => {
+    setRaw(String(value ?? ""));
+  }, [value]);
 
   return (
     <input
@@ -441,26 +965,30 @@ function NumberBox({
         const v = e.target.value;
         setRaw(v);
         const num = Number(v);
-        if (!Number.isNaN(num)) onChange(num);
+        if (!Number.isNaN(num)) onChange(Math.max(0, num));
       }}
       onBlur={() => {
         const num = Number(raw);
-        const fixed = Number.isNaN(num) ? 0 : num;
+        const fixed = Number.isNaN(num) ? 0 : Math.max(0, num);
         onChange(fixed);
         setRaw(String(fixed));
       }}
       style={{ ...input(), width: width ? width : "100%" }}
+      placeholder="0"
     />
   );
 }
 
 function ReadonlyBox({ value }: { value: string }) {
-  return <input type="text" value={value} readOnly disabled style={{ ...input(), color: "#555", background: "#f8fafc" }} />;
+  return (
+    <input type="text" value={value} readOnly disabled style={{ ...input(), color: "#555", background: "#f8fafc" }} />
+  );
 }
 
-function Divider() { return <div style={dash()}>--------</div>; }
+function Divider() {
+  return <div style={dash()}>--------</div>;
+}
 
-/* ============================ HelpTip(팝오버) ============================ */
 function HelpTip({
   title,
   children,
@@ -526,15 +1054,26 @@ function useUniqueId() {
   return id;
 }
 
+const clampPct = (n: number) => Math.max(0, Math.min(100, Number.isFinite(n) ? n : 0));
+
 const page = () => ({ padding: 16 });
 
-// 좌우 카드 폭 비슷하게 + 간격 유지
-const grid2Col = () => ({
+/* 상단 2열: 좌측 입력을 조금 좁게(1.4) / 우측 합계(1) + 간격 넓힘 */
+const topGrid = () => ({
   display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(600px, 1fr))",
+  gridTemplateColumns: "1.4fr 1fr",
+  gap: 28, // ← 간격 넓힘
+  alignItems: "stretch",
+  maxWidth: 2100,
+  margin: "0 auto 16px",
+});
+
+const grid3Col = () => ({
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(520px, 1fr))",
   gap: 56,
   alignItems: "start",
-  maxWidth: 1320,
+  maxWidth: 2100,
   margin: "0 auto",
 });
 
@@ -558,6 +1097,16 @@ const field = () => ({
   gap: 10,
   marginTop: 10,
 });
+
+const twoCols = () => ({
+  display: "grid",
+  gridTemplateColumns: "200px 1fr 200px 1fr",
+  alignItems: "center",
+  gap: 10,
+  marginTop: 10,
+});
+
+const twoColsLabel = () => ({ fontSize: 14, color: "#111", fontWeight: 600 });
 
 const input = () => ({
   width: "100%",
@@ -637,7 +1186,7 @@ const sheetBar = (): React.CSSProperties => ({
   border: "1px solid #e5e7eb",
   background: "#f8fafc",
   margin: "0 auto 16px",
-  maxWidth: 1320,
+  maxWidth: 2100,
   overflow: "hidden",
 });
 
@@ -649,3 +1198,45 @@ const sheetLink = (): React.CSSProperties => ({
   display: "inline-block",
   maxWidth: "100%",
 });
+
+/* 상단 합계 카드 */
+function QuickTotal({ label, valueKRW }: { label: string; valueKRW: number }) {
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: 14,
+        borderRadius: 12,
+        border: "1px solid #e5e7eb",
+        background: "#f8fafc",
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <span style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{label}</span>
+      <span style={{ fontSize: 20, fontWeight: 900 }}>{fmtKRWwon(valueKRW)}</span>
+    </div>
+  );
+}
+
+function Line({ label, value }: { label: React.ReactNode; value: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "10px 12px",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        background: "#f9fafb",
+        marginTop: 6,
+      }}
+    >
+      <span style={{ color: "#111" }}>{label}</span>
+      <b>{fmtKRWwon(value)}</b>
+    </div>
+  );
+}
