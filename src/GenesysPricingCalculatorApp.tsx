@@ -110,7 +110,7 @@ export default function PricingApp() {
 
   // 상단 합계(원) – 자식 계산기에서 실시간 업데이트
   const [gTotalKRW, setGTotalKRW] = useState(0);
-  const [gTotalNoSubKRW, setGTotalNoSubKRW] = useState(0); // ★ '구독료 제외 시' 연동
+  const [gTotalNoSubKRW, setGTotalNoSubKRW] = useState(0);
   const [aTotalKRW, setATotalKRW] = useState(0);
   const [eTotalKRW, setETotalKRW] = useState(0);
 
@@ -173,11 +173,10 @@ export default function PricingApp() {
             아래 섹션과 연동된 최종 월 합계를 <b>원화</b>로 바로 보여줘요. (할인/환율/마진 반영)
           </div>
 
-          {/* ★ 보조 라인(굵고 크게) */}
           <QuickTotal
             label="제네시스 총합계 (원)"
             valueKRW={gTotalKRW}
-            subLabel="구독료(CC비용) 제외 시"
+            subLabel="구독료 제외 (토큰 사용 시 가격 변동 有) "
             subValueKRW={gTotalNoSubKRW}
           />
           <QuickTotal label="AWS 총합계 (원)" valueKRW={aTotalKRW} />
@@ -219,16 +218,18 @@ export default function PricingApp() {
   );
 }
 
-/* ============================ Genesys 계산기 ============================ */
+/* ============================ Genesys 계산기 (수정됨) ============================ */
 function GenesysCalculator(props: {
   linkedChatbotChannels?: number;
   linkedCallbotChannels?: number;
   linkedAdvisorSeats?: number;
   onTotalKRWChange?: (krw: number, krwNoSub?: number) => void;
 }) {
+  // 최상단: 할인/환율
   const [discountRate, setDiscountRate] = useState(0);
   const [exchangeRate, setExchangeRate] = useState(1400);
 
+  // CX 패키지 가격/무료토큰 (동적)
   const [pkgPrice, setPkgPrice] = useState<Record<"CX1" | "CX2" | "CX3" | "CX4", number>>({
     CX1: 75,
     CX2: 115,
@@ -242,6 +243,7 @@ function GenesysCalculator(props: {
     CX4: 30,
   });
 
+  // 일반 입력
   const [cxPackage, setCxPackage] = useState<"CX1" | "CX2" | "CX3" | "CX4">("CX4");
   const [sttAddOnPacks, setSttAddOnPacks] = useState(0);
 
@@ -262,9 +264,11 @@ function GenesysCalculator(props: {
   const [advisorAvgCallMin, setAdvisorAvgCallMin] = useState(3);
   const [advisorAnsweredPerDay, setAdvisorAnsweredPerDay] = useState(100);
   const [daysAdvisorPerMonth, setDaysAdvisorPerMonth] = useState(22);
-  const [advisorTokensMonthlyInput, setAdvisorTokensMonthlyInput] = useState(0);
 
-  // ★ 초기 로드 저장값 복원
+  // ★ 변경: Per-Agent 입력(개/인)
+  const [advisorTokensMonthlyInput, setAdvisorTokensMonthlyInput] = useState(0); // 저장 키 유지
+
+  // ★ 최초 로드 시 기본값 복원
   useEffect(() => {
     const d = lsLoad(LS_KEYS.GENESYS, {
       discountRate: 0,
@@ -285,7 +289,7 @@ function GenesysCalculator(props: {
       advisorAvgCallMin: 3,
       advisorAnsweredPerDay: 100,
       daysAdvisorPerMonth: 22,
-      advisorTokensMonthlyInput: 0,
+      advisorTokensMonthlyInput: 0, // per-agent로 해석
     });
     setDiscountRate(d.discountRate);
     setExchangeRate(d.exchangeRate);
@@ -341,8 +345,10 @@ function GenesysCalculator(props: {
     const sttBillableMinutes = Math.max(0, advisorSTTMinutesMonthly - freeSTTMinutesMonthly);
     const sttMonthly = sttBillableMinutes * UNIT.advisorSTTPerMinuteUSD;
 
+    // ★ 변경: 총 사용 토큰 = per-agent 입력 × 상담사 수
+    const usedTokensMonthly = Math.max(0, advisors * advisorTokensMonthlyInput);
+
     const freeTokensMonthly = advisors * freeTokenPerSeat;
-    const usedTokensMonthly = advisorTokensMonthlyInput;
     const tokenBillable = Math.max(0, usedTokensMonthly - freeTokensMonthly);
     const tokenMonthly = tokenBillable * UNIT.advisorTokenPerEachUSD;
 
@@ -350,14 +356,14 @@ function GenesysCalculator(props: {
     const unusedTokenCreditUSD = unusedFreeTokens * UNIT.advisorTokenPerEachUSD;
 
     const advisorUsageMonthly = sttMonthly + tokenMonthly;
-
-    const preCreditTotal = advisorSubMonthly + chatbotMonthly + callbotMonthly + advisorUsageMonthly;
+    const preCreditTotal =
+      advisorSubMonthly + chatbotMonthly + callbotMonthly + advisorUsageMonthly;
     const preDiscountTotal = Math.max(0, preCreditTotal - unusedTokenCreditUSD);
 
     const discount = Math.max(0, Math.min(100, discountRate));
     const grandTotalMonthly = Math.max(0, preDiscountTotal * (1 - discount / 100));
 
-    // ★ 구독료 제외 합계
+    // 구독료 제외 합계
     const preCreditNoSub = chatbotMonthly + callbotMonthly + advisorUsageMonthly;
     const preDiscountNoSub = Math.max(0, preCreditNoSub - unusedTokenCreditUSD);
     const grandTotalNoSubMonthly = Math.max(0, preDiscountNoSub * (1 - discount / 100));
@@ -367,12 +373,13 @@ function GenesysCalculator(props: {
       chatbotMonthly,
       callbotMonthly,
       advisorUsageMonthly,
-      freeTokensMonthly: advisors * freeTokenPerSeat,
+      freeTokensMonthly,
       unusedFreeTokens,
       unusedTokenCreditUSD,
       preDiscountTotal,
       grandTotalMonthly,
-      grandTotalNoSubMonthly, // ★
+      grandTotalNoSubMonthly,
+      usedTokensMonthly, // 참고 표시용
     };
   }, [
     advisors,
@@ -391,7 +398,7 @@ function GenesysCalculator(props: {
     freeSTTPerSeat,
     sttAddOnPacks,
     freeTokenPerSeat,
-    advisorTokensMonthlyInput,
+    advisorTokensMonthlyInput, // per-agent
     discountRate,
   ]);
 
@@ -403,7 +410,7 @@ function GenesysCalculator(props: {
     );
   }, [calc.grandTotalMonthly, calc.grandTotalNoSubMonthly, exchangeRate]);
 
-  // 저장
+  // ★ 저장 버튼 핸들러 (키는 유지)
   const saveDefaults = () => {
     lsSave(LS_KEYS.GENESYS, {
       discountRate,
@@ -424,7 +431,7 @@ function GenesysCalculator(props: {
       advisorAvgCallMin,
       advisorAnsweredPerDay,
       daysAdvisorPerMonth,
-      advisorTokensMonthlyInput,
+      advisorTokensMonthlyInput, // per-agent
     });
     alert("Genesys 기본값을 저장했어요.");
   };
@@ -608,20 +615,24 @@ function GenesysCalculator(props: {
       <Field label="영업일(월)">
         <NumberBox value={daysAdvisorPerMonth} onChange={setDaysAdvisorPerMonth} />
       </Field>
-      <Field label="어드바이저 월 사용 토큰(개)">
+      {/* ★ 변경: per-agent 입력 */}
+      <Field label="어드바이저 월 사용 토큰(개/인)">
         <NumberBox value={advisorTokensMonthlyInput} onChange={setAdvisorTokensMonthlyInput} />
       </Field>
       <div style={noteBox()}>
         STT 단가: {fmtUSD3(UNIT.advisorSTTPerMinuteUSD)}/분 · STT 산식 = 좌석 × 하루 콜 × 평균 통화분 × 영업일 − (무료 구독 STT + 무료 ADD-ON STT)
         <br />
-        토큰 단가: {fmtUSD3(UNIT.advisorTokenPerEachUSD)}/개 · 토큰 산식 = (입력 토큰 − 무료 토큰)⁺
+        토큰 단가: {fmtUSD3(UNIT.advisorTokenPerEachUSD)}/개 · 토큰 산식 = <b>입력(개/인) × 상담사 수</b> − 무료 토큰
         <br />
         <span style={{ color: "#0a58ca", fontWeight: 700 }}>
-          미사용 무료 토큰 크레딧: {(Math.max(0, advisors * pkgFreeToken[cxPackage] - advisorTokensMonthlyInput)).toLocaleString()} 개 → {fmtUSD0(calc.unusedTokenCreditUSD)} 총합계에서 차감
+          미사용 무료 토큰 크레딧: {calc.unusedFreeTokens.toLocaleString()} 개 → {fmtUSD0(calc.unusedTokenCreditUSD)} 총합계에서 차감
         </span>
       </div>
-      <div style={sectionTotal()}>
-        어드바이저 월 비용(STT+토큰): <b>{fmtUSD0(calc.advisorUsageMonthly)} ({fmtKRW(calc.advisorUsageMonthly, exchangeRate)})</b>
+      <div style={{ ...sectionTotal(), display: "grid", gap: 6 }}>
+        <div>어드바이저 월 비용(STT+토큰): <b>{fmtUSD0(calc.advisorUsageMonthly)} ({fmtKRW(calc.advisorUsageMonthly, exchangeRate)})</b></div>
+        <div style={{ fontSize: 13, color: "#0f172a" }}>
+          총 사용 토큰(계산): <b>{calc.usedTokensMonthly.toLocaleString()} 개</b> (개/인 {advisorTokensMonthlyInput.toLocaleString()} × 상담사 {advisors.toLocaleString()}석)
+        </div>
       </div>
 
       <Divider />
@@ -665,7 +676,7 @@ function AwsCalculator(props: {
   const [advAvgMinutes, setAdvAvgMinutes] = useState(3);
   const [advDays, setAdvDays] = useState(22);
 
-  // 복원
+  // ★ 최초 로드 시 기본값 복원
   useEffect(() => {
     const d = lsLoad(LS_KEYS.AWS, {
       awsRate: 1400,
@@ -699,7 +710,7 @@ function AwsCalculator(props: {
     setAdvDays(d.advDays);
   }, []);
 
-  // 전역 연동
+  // 전역 → 로컬 동기화 (기존 유지)
   useEffect(() => {
     if (props.linkedChatbotChannels !== undefined) setCbtChannels(props.linkedChatbotChannels);
   }, [props.linkedChatbotChannels]);
@@ -741,10 +752,12 @@ function AwsCalculator(props: {
     discountRate,
   ]);
 
+  // 상단 합계(원) 업데이트
   useEffect(() => {
     props.onTotalKRWChange?.(Math.round(calc.totalUSD * awsRate));
   }, [calc.totalUSD, awsRate]);
 
+  // ★ 저장 버튼
   const saveDefaults = () => {
     lsSave(LS_KEYS.AWS, {
       awsRate,
@@ -886,9 +899,9 @@ function EcpAiCalculator(props: {
   onTotalKRWChange?: (krw: number) => void;
 }) {
   // 수량
-  const [chatbotCh, setChatbotCh] = useState(0);
-  const [callbotCh, setCallbotCh] = useState(0);
-  const [advisorSeat, setAdvisorSeat] = useState(0);
+  const [chatbotCh, setChatbotCh] = useState(0); // ① 챗봇
+  const [callbotCh, setCallbotCh] = useState(0); // ② 콜봇
+  const [advisorSeat, setAdvisorSeat] = useState(0); // ③ 어드바이저
   const [taSeat, setTaSeat] = useState(0);
   const [qaSeat, setQaSeat] = useState(0);
   const [kmsSeat, setKmsSeat] = useState(0);
@@ -905,7 +918,7 @@ function EcpAiCalculator(props: {
   const [discSTT, setDiscSTT] = useState(0);
   const [discTTS, setDiscTTS] = useState(0);
 
-  // 전체 할인률 → 항목 반영
+  // 전체 할인률(%) — 변경 시 각 항목 할인률 자동 반영
   const [globalDiscount, setGlobalDiscount] = useState(0);
   useEffect(() => {
     const d = clampPct(globalDiscount);
@@ -919,10 +932,10 @@ function EcpAiCalculator(props: {
     setDiscTTS(d);
   }, [globalDiscount]);
 
-  // 마진율
+  // 마진율(%) — 기본값 40
   const [marginPct, setMarginPct] = useState(40);
 
-  // 복원
+  // ★ 최초 로드 시 기본값 복원
   useEffect(() => {
     const d = lsLoad(LS_KEYS.ECP, {
       chatbotCh: 0,
@@ -964,13 +977,14 @@ function EcpAiCalculator(props: {
     setMarginPct(d.marginPct);
   }, []);
 
-  // 전역 연동
+  // 전역 → 로컬 동기화
   useEffect(() => {
     if (props.linkedChatbotChannels !== undefined) setChatbotCh(props.linkedChatbotChannels);
   }, [props.linkedChatbotChannels]);
   useEffect(() => {
     if (props.linkedCallbotChannels !== undefined) setCallbotCh(props.linkedCallbotChannels);
   }, [props.linkedCallbotChannels]);
+  // 👉 어드바이저 좌석 전역 입력 시, ECP-AI의 어드바이저/QA/TA/KMS를 모두 동일 값으로 연동
   useEffect(() => {
     if (props.linkedAdvisorSeats !== undefined) {
       const v = props.linkedAdvisorSeats;
@@ -981,6 +995,7 @@ function EcpAiCalculator(props: {
     }
   }, [props.linkedAdvisorSeats]);
 
+  // 수량별 자동 할인 (챗봇/어드바이저/QA/TA/KMS만 적용)
   const qtyTierDiscount = (q: number) => {
     if (!Number.isFinite(q) || q < 50) return 0;
     if (q < 200) return 5;
@@ -993,6 +1008,7 @@ function EcpAiCalculator(props: {
   useEffect(() => setDiscQA(qtyTierDiscount(qaSeat)), [qaSeat]);
   useEffect(() => setDiscTA(qtyTierDiscount(taSeat)), [taSeat]);
   useEffect(() => setDiscKMS(qtyTierDiscount(kmsSeat)), [kmsSeat]);
+  // 콜봇/STT/TTS는 자동 할인 미적용
 
   const calc = useMemo(() => {
     const price = (qty: number, unit: number, dPct: number) =>
@@ -1042,10 +1058,12 @@ function EcpAiCalculator(props: {
     marginPct,
   ]);
 
+  // 상단 합계(원) 업데이트
   useEffect(() => {
     props.onTotalKRWChange?.(calc.grandTotal);
   }, [calc.grandTotal]);
 
+  // ★ 저장 버튼
   const saveDefaults = () => {
     lsSave(LS_KEYS.ECP, {
       chatbotCh,
@@ -1089,6 +1107,7 @@ function EcpAiCalculator(props: {
         <button type="button" onClick={saveDefaults} style={saveBtn()}>저장</button>
       </div>
 
+      {/* 전체 할인률 */}
       <Field label="전체 할인률(%)">
         <NumberBox value={globalDiscount} onChange={setGlobalDiscount} allowFloat />
       </Field>
@@ -1098,6 +1117,7 @@ function EcpAiCalculator(props: {
 
       <Divider />
 
+      {/* 수량 / 항목별 할인률 */}
       <h2 style={subtitle()}>수량 / 항목별 할인률</h2>
 
       <TwoCols label="챗봇 채널 수" rightLabel="챗봇 할인률(%)">
@@ -1142,6 +1162,7 @@ function EcpAiCalculator(props: {
 
       <Divider />
 
+      {/* 마진율 */}
       <Field label="마진율(%)">
         <NumberBox value={marginPct} onChange={setMarginPct} allowFloat />
       </Field>
@@ -1151,6 +1172,7 @@ function EcpAiCalculator(props: {
 
       <Divider />
 
+      {/* 요약 */}
       <h2 style={subtitle()}>요약</h2>
       <Line label={`콜봇 (단가 ${fmtKRWwon(ECP_UNIT_KRW.callbotPerChannel)} /채널 · 할인 ${clampPct(discCallbot)}%)`} value={calc.items.callbot} />
       <Line label={`챗봇 (단가 ${fmtKRWwon(ECP_UNIT_KRW.chatbotPerChannel)} /채널 · 할인 ${clampPct(discChatbot)}%)`} value={calc.items.chatbot} />
@@ -1319,10 +1341,11 @@ const clampPct = (n: number) => Math.max(0, Math.min(100, Number.isFinite(n) ? n
 
 const page = () => ({ padding: 16 });
 
+/* 상단 2열: 좌측 입력을 조금 좁게(1.4) / 우측 합계(1) + 간격 넓힘 */
 const topGrid = () => ({
   display: "grid",
   gridTemplateColumns: "1.4fr 1fr",
-  gap: 28,
+  gap: 28, // ← 간격 넓힘
   alignItems: "stretch",
   maxWidth: 2100,
   margin: "0 auto 16px",
@@ -1486,11 +1509,10 @@ function QuickTotal({
       }}
     >
       <div>
-        <span style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{label}</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{label}</span>
         {typeof subValueKRW === "number" && subLabel && (
           <div
-            /* ★ 가독성 강화: 글씨 키우고 굵게, 색 진하게 */
-            style={{ fontSize: 19, fontWeight: 800, color: "#0f172a", marginTop: 6 }}
+            style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginTop: 6 }}
           >
             └ <span>{subLabel}:</span> <span>{fmtKRWwon(subValueKRW)}</span>
           </div>
