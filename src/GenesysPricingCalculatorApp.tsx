@@ -65,6 +65,30 @@ const ECP_UNIT_KRW = {
   ttsPerChannel: 20_000,
 } as const;
 
+/* ============================ ★ 공통 영속 유틸(localStorage) ============================ */
+const LS_KEYS = {
+  GLOBAL: "pricing.globalDefaults.v1",
+  GENESYS: "pricing.genesys.defaults.v1",
+  AWS: "pricing.aws.defaults.v1",
+  ECP: "pricing.ecp.defaults.v1",
+} as const;
+
+function lsLoad<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return { ...fallback, ...parsed };
+  } catch {
+    return fallback;
+  }
+}
+function lsSave<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
 /* ============================ 메인 앱 ============================ */
 export default function PricingApp() {
   // 전역 연동 입력
@@ -72,10 +96,32 @@ export default function PricingApp() {
   const [globalCallbotChannels, setGlobalCallbotChannels] = useState<number | undefined>(undefined);
   const [globalAdvisorSeats, setGlobalAdvisorSeats] = useState<number | undefined>(undefined);
 
+  // ★ 최초 로드 시 전역 기본값 복원
+  useEffect(() => {
+    const d = lsLoad(LS_KEYS.GLOBAL, {
+      globalChatbotChannels: 0,
+      globalCallbotChannels: 0,
+      globalAdvisorSeats: 0,
+    });
+    setGlobalChatbotChannels(d.globalChatbotChannels);
+    setGlobalCallbotChannels(d.globalCallbotChannels);
+    setGlobalAdvisorSeats(d.globalAdvisorSeats);
+  }, []);
+
   // 상단 합계(원) – 자식 계산기에서 실시간 업데이트
   const [gTotalKRW, setGTotalKRW] = useState(0);
   const [aTotalKRW, setATotalKRW] = useState(0);
   const [eTotalKRW, setETotalKRW] = useState(0);
+
+  // ★ 전역 입력값 저장 버튼
+  const saveGlobalDefaults = () => {
+    lsSave(LS_KEYS.GLOBAL, {
+      globalChatbotChannels: globalChatbotChannels ?? 0,
+      globalCallbotChannels: globalCallbotChannels ?? 0,
+      globalAdvisorSeats: globalAdvisorSeats ?? 0,
+    });
+    alert("전체 입력(연동) 기본값을 저장했어요.");
+  };
 
   return (
     <div style={page()}>
@@ -95,9 +141,15 @@ export default function PricingApp() {
 
       {/* ── 상단 2열: 좌측 입력 · 우측 합계 ── */}
       <div style={topGrid()}>
-        {/* 좌측: 전체 입력(연동) — 폭을 조금 줄이고, 라벨 문구 변경 */}
+        {/* 좌측: 전체 입력(연동) */}
         <div style={{ ...container(), padding: 16 }}>
-          <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>전체 입력(연동)</h1>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>전체 입력(연동)</h1>
+            {/* ★ 저장 버튼 */}
+            <button type="button" onClick={saveGlobalDefaults} style={saveBtn()}>
+              저장
+            </button>
+          </div>
           <div style={noteBox()}>
             여기 입력하면 아래 <b>Genesys / AWS / ECP-AI</b> 계산기의 <b>채널/좌석 수</b>가 함께 갱신됩니다.
             (각 계산기에서 개별로 수정해도 전역값은 바뀌지 않아요)
@@ -206,6 +258,50 @@ function GenesysCalculator(props: {
   const [daysAdvisorPerMonth, setDaysAdvisorPerMonth] = useState(22);
   const [advisorTokensMonthlyInput, setAdvisorTokensMonthlyInput] = useState(0);
 
+  // ★ 최초 로드 시 기본값 복원
+  useEffect(() => {
+    const d = lsLoad(LS_KEYS.GENESYS, {
+      discountRate: 0,
+      exchangeRate: 1400,
+      pkgPrice: { CX1: 75, CX2: 115, CX3: 155, CX4: 240 },
+      pkgFreeToken: { CX1: 0, CX2: 0, CX3: 0, CX4: 30 },
+      cxPackage: "CX4" as "CX1" | "CX2" | "CX3" | "CX4",
+      sttAddOnPacks: 0,
+      chatbotChannels: 0,
+      chatbotConsultsPerDay: 100,
+      chatbotSessionsPerConsult: 5,
+      daysChatbotPerMonth: 25,
+      callbotChannels: 0,
+      callbotAvgCallMin: 3,
+      callbotAnsweredPerDay: 100,
+      daysCallbotPerMonth: 25,
+      advisors: 0,
+      advisorAvgCallMin: 3,
+      advisorAnsweredPerDay: 100,
+      daysAdvisorPerMonth: 22,
+      advisorTokensMonthlyInput: 0,
+    });
+    setDiscountRate(d.discountRate);
+    setExchangeRate(d.exchangeRate);
+    setPkgPrice(d.pkgPrice);
+    setPkgFreeToken(d.pkgFreeToken);
+    setCxPackage(d.cxPackage);
+    setSttAddOnPacks(d.sttAddOnPacks);
+    setChatbotChannels(d.chatbotChannels);
+    setChatbotConsultsPerDay(d.chatbotConsultsPerDay);
+    setChatbotSessionsPerConsult(d.chatbotSessionsPerConsult);
+    setDaysChatbotPerMonth(d.daysChatbotPerMonth);
+    setCallbotChannels(d.callbotChannels);
+    setCallbotAvgCallMin(d.callbotAvgCallMin);
+    setCallbotAnsweredPerDay(d.callbotAnsweredPerDay);
+    setDaysCallbotPerMonth(d.daysCallbotPerMonth);
+    setAdvisors(d.advisors);
+    setAdvisorAvgCallMin(d.advisorAvgCallMin);
+    setAdvisorAnsweredPerDay(d.advisorAnsweredPerDay);
+    setDaysAdvisorPerMonth(d.daysAdvisorPerMonth);
+    setAdvisorTokensMonthlyInput(d.advisorTokensMonthlyInput);
+  }, []);
+
   // 전역 → 로컬 동기화
   useEffect(() => {
     if (props.linkedChatbotChannels !== undefined) setChatbotChannels(props.linkedChatbotChannels);
@@ -292,32 +388,61 @@ function GenesysCalculator(props: {
     props.onTotalKRWChange?.(Math.round(calc.grandTotalMonthly * exchangeRate));
   }, [calc.grandTotalMonthly, exchangeRate]);
 
+  // ★ 저장 버튼 핸들러
+  const saveDefaults = () => {
+    lsSave(LS_KEYS.GENESYS, {
+      discountRate,
+      exchangeRate,
+      pkgPrice,
+      pkgFreeToken,
+      cxPackage,
+      sttAddOnPacks,
+      chatbotChannels,
+      chatbotConsultsPerDay,
+      chatbotSessionsPerConsult,
+      daysChatbotPerMonth,
+      callbotChannels,
+      callbotAvgCallMin,
+      callbotAnsweredPerDay,
+      daysCallbotPerMonth,
+      advisors,
+      advisorAvgCallMin,
+      advisorAnsweredPerDay,
+      daysAdvisorPerMonth,
+      advisorTokensMonthlyInput,
+    });
+    alert("Genesys 기본값을 저장했어요.");
+  };
+
   return (
     <>
-      {/* 타이틀 + 링크 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h1 style={{ ...title(), marginBottom: 0 }}>Genesys CCaaS 요금 계산기</h1>
-        <HelpTip title="관련 자료">
-          <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <a
-              href="https://help.mypurecloud.com/articles/genesys-cloud-tokens-based-pricing-model/"
-              target="_blank"
-              rel="noreferrer noopener"
-              style={link()}
-            >
-              Genesys Cloud Tokens-based Pricing Model
-            </a>
-            <a
-              href="https://www.genesys.com/pricing"
-              target="_blank"
-              rel="noreferrer noopener"
-              style={link()}
-            >
-              Genesys Pricing
-            </a>
-            <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
-          </div>
-        </HelpTip>
+      {/* 타이틀 + 링크 + 저장 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h1 style={{ ...title(), marginBottom: 0 }}>Genesys CCaaS 요금 계산기</h1>
+          <HelpTip title="관련 자료">
+            <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              <a
+                href="https://help.mypurecloud.com/articles/genesys-cloud-tokens-based-pricing-model/"
+                target="_blank"
+                rel="noreferrer noopener"
+                style={link()}
+              >
+                Genesys Cloud Tokens-based Pricing Model
+              </a>
+              <a
+                href="https://www.genesys.com/pricing"
+                target="_blank"
+                rel="noreferrer noopener"
+                style={link()}
+              >
+                Genesys Pricing
+              </a>
+              <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
+            </div>
+          </HelpTip>
+        </div>
+        <button type="button" onClick={saveDefaults} style={saveBtn()}>저장</button>
       </div>
 
       {/* 최상단: 할인/환율 */}
@@ -522,6 +647,40 @@ function AwsCalculator(props: {
   const [advAvgMinutes, setAdvAvgMinutes] = useState(3);
   const [advDays, setAdvDays] = useState(22);
 
+  // ★ 최초 로드 시 기본값 복원
+  useEffect(() => {
+    const d = lsLoad(LS_KEYS.AWS, {
+      awsRate: 1400,
+      discountRate: 0,
+      cbtChannels: 0,
+      cbtConsultsPerDay: 100,
+      cbtSessionsPerConsult: 5,
+      cbtDays: 25,
+      clbChannels: 0,
+      clbConsultsPerDay: 100,
+      clbAvgMinutes: 3,
+      clbDays: 25,
+      advChannels: 0,
+      advConsultsPerDay: 100,
+      advAvgMinutes: 3,
+      advDays: 22,
+    });
+    setAwsRate(d.awsRate);
+    setDiscountRate(d.discountRate);
+    setCbtChannels(d.cbtChannels);
+    setCbtConsultsPerDay(d.cbtConsultsPerDay);
+    setCbtSessionsPerConsult(d.cbtSessionsPerConsult);
+    setCbtDays(d.cbtDays);
+    setClbChannels(d.clbChannels);
+    setClbConsultsPerDay(d.clbConsultsPerDay);
+    setClbAvgMinutes(d.clbAvgMinutes);
+    setClbDays(d.clbDays);
+    setAdvChannels(d.advChannels);
+    setAdvConsultsPerDay(d.advConsultsPerDay);
+    setAdvAvgMinutes(d.advAvgMinutes);
+    setAdvDays(d.advDays);
+  }, []);
+
   // 전역 → 로컬 동기화 (기존 유지)
   useEffect(() => {
     if (props.linkedChatbotChannels !== undefined) setCbtChannels(props.linkedChatbotChannels);
@@ -569,28 +728,52 @@ function AwsCalculator(props: {
     props.onTotalKRWChange?.(Math.round(calc.totalUSD * awsRate));
   }, [calc.totalUSD, awsRate]);
 
+  // ★ 저장 버튼
+  const saveDefaults = () => {
+    lsSave(LS_KEYS.AWS, {
+      awsRate,
+      discountRate,
+      cbtChannels,
+      cbtConsultsPerDay,
+      cbtSessionsPerConsult,
+      cbtDays,
+      clbChannels,
+      clbConsultsPerDay,
+      clbAvgMinutes,
+      clbDays,
+      advChannels,
+      advConsultsPerDay,
+      advAvgMinutes,
+      advDays,
+    });
+    alert("AWS 기본값을 저장했어요.");
+  };
+
   const usd = (n: number) => fmtUSD0(n);
   const krw = (n: number) => fmtKRW(n, awsRate);
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h1 style={{ ...title(), marginBottom: 0 }}>
-          AWS CCaaS 요금 계산기 (all-inclusive 기준)
-        </h1>
-        <HelpTip title="관련 자료">
-          <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
-            <a
-              href="https://aws.amazon.com/ko/connect/pricing/"
-              target="_blank"
-              rel="noreferrer noopener"
-              style={link()}
-            >
-              Amazon Connect Pricing
-            </a>
-            <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
-          </div>
-        </HelpTip>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h1 style={{ ...title(), marginBottom: 0 }}>
+            AWS CCaaS 요금 계산기 (all-inclusive 기준)
+          </h1>
+          <HelpTip title="관련 자료">
+            <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              <a
+                href="https://aws.amazon.com/ko/connect/pricing/"
+                target="_blank"
+                rel="noreferrer noopener"
+                style={link()}
+              >
+                Amazon Connect Pricing
+              </a>
+              <div style={{ color: "#64748b", marginTop: 4 }}>팝오버 밖을 클릭하면 닫혀요.</div>
+            </div>
+          </HelpTip>
+        </div>
+        <button type="button" onClick={saveDefaults} style={saveBtn()}>저장</button>
       </div>
 
       <Field label="할인율(%)">
@@ -695,24 +878,6 @@ function EcpAiCalculator(props: {
   const [sttCh, setSttCh] = useState(0);
   const [ttsCh, setTtsCh] = useState(0);
 
-  // 전역 → 로컬 동기화
-  useEffect(() => {
-    if (props.linkedChatbotChannels !== undefined) setChatbotCh(props.linkedChatbotChannels);
-  }, [props.linkedChatbotChannels]);
-  useEffect(() => {
-    if (props.linkedCallbotChannels !== undefined) setCallbotCh(props.linkedCallbotChannels);
-  }, [props.linkedCallbotChannels]);
-  // 👉 변경점: 어드바이저 좌석 전역 입력 시, ECP-AI의 어드바이저/QA/TA/KMS를 모두 동일 값으로 연동
-  useEffect(() => {
-    if (props.linkedAdvisorSeats !== undefined) {
-      const v = props.linkedAdvisorSeats;
-      setAdvisorSeat(v);
-      setQaSeat(v);
-      setTaSeat(v);
-      setKmsSeat(v);
-    }
-  }, [props.linkedAdvisorSeats]);
-
   // 항목별 할인률(%)
   const [discChatbot, setDiscChatbot] = useState(0);
   const [discCallbot, setDiscCallbot] = useState(0);
@@ -739,6 +904,66 @@ function EcpAiCalculator(props: {
 
   // 마진율(%) — 기본값 40
   const [marginPct, setMarginPct] = useState(40);
+
+  // ★ 최초 로드 시 기본값 복원
+  useEffect(() => {
+    const d = lsLoad(LS_KEYS.ECP, {
+      chatbotCh: 0,
+      callbotCh: 0,
+      advisorSeat: 0,
+      taSeat: 0,
+      qaSeat: 0,
+      kmsSeat: 0,
+      sttCh: 0,
+      ttsCh: 0,
+      discChatbot: 0,
+      discCallbot: 0,
+      discAdvisor: 0,
+      discTA: 0,
+      discQA: 0,
+      discKMS: 0,
+      discSTT: 0,
+      discTTS: 0,
+      globalDiscount: 0,
+      marginPct: 40,
+    });
+    setChatbotCh(d.chatbotCh);
+    setCallbotCh(d.callbotCh);
+    setAdvisorSeat(d.advisorSeat);
+    setTaSeat(d.taSeat);
+    setQaSeat(d.qaSeat);
+    setKmsSeat(d.kmsSeat);
+    setSttCh(d.sttCh);
+    setTtsCh(d.ttsCh);
+    setDiscChatbot(d.discChatbot);
+    setDiscCallbot(d.discCallbot);
+    setDiscAdvisor(d.discAdvisor);
+    setDiscTA(d.discTA);
+    setDiscQA(d.discQA);
+    setDiscKMS(d.discKMS);
+    setDiscSTT(d.discSTT);
+    setDiscTTS(d.discTTS);
+    setGlobalDiscount(d.globalDiscount);
+    setMarginPct(d.marginPct);
+  }, []);
+
+  // 전역 → 로컬 동기화
+  useEffect(() => {
+    if (props.linkedChatbotChannels !== undefined) setChatbotCh(props.linkedChatbotChannels);
+  }, [props.linkedChatbotChannels]);
+  useEffect(() => {
+    if (props.linkedCallbotChannels !== undefined) setCallbotCh(props.linkedCallbotChannels);
+  }, [props.linkedCallbotChannels]);
+  // 👉 어드바이저 좌석 전역 입력 시, ECP-AI의 어드바이저/QA/TA/KMS를 모두 동일 값으로 연동
+  useEffect(() => {
+    if (props.linkedAdvisorSeats !== undefined) {
+      const v = props.linkedAdvisorSeats;
+      setAdvisorSeat(v);
+      setQaSeat(v);
+      setTaSeat(v);
+      setKmsSeat(v);
+    }
+  }, [props.linkedAdvisorSeats]);
 
   // 수량별 자동 할인 (챗봇/어드바이저/QA/TA/KMS만 적용)
   const qtyTierDiscount = (q: number) => {
@@ -808,20 +1033,48 @@ function EcpAiCalculator(props: {
     props.onTotalKRWChange?.(calc.grandTotal);
   }, [calc.grandTotal]);
 
+  // ★ 저장 버튼
+  const saveDefaults = () => {
+    lsSave(LS_KEYS.ECP, {
+      chatbotCh,
+      callbotCh,
+      advisorSeat,
+      taSeat,
+      qaSeat,
+      kmsSeat,
+      sttCh,
+      ttsCh,
+      discChatbot,
+      discCallbot,
+      discAdvisor,
+      discTA,
+      discQA,
+      discKMS,
+      discSTT,
+      discTTS,
+      globalDiscount,
+      marginPct,
+    });
+    alert("ECP-AI 기본값을 저장했어요.");
+  };
+
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h1 style={{ ...title(), marginBottom: 0 }}>ECP-AI 단가 계산기</h1>
-        <HelpTip title="단가 (월)">
-          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-            <div>콜봇: {fmtKRWwon(ECP_UNIT_KRW.callbotPerChannel)}/채널</div>
-            <div>챗봇: {fmtKRWwon(ECP_UNIT_KRW.chatbotPerChannel)}/채널</div>
-            <div>어드바이저: {fmtKRWwon(ECP_UNIT_KRW.advisorPerSeat)}/석</div>
-            <div>TA/QA/KMS: {fmtKRWwon(25_000)}/석</div>
-            <div>STT: {fmtKRWwon(ECP_UNIT_KRW.sttPerChannel)}/채널</div>
-            <div>TTS: {fmtKRWwon(ECP_UNIT_KRW.ttsPerChannel)}/채널</div>
-          </div>
-        </HelpTip>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h1 style={{ ...title(), marginBottom: 0 }}>ECP-AI 단가 계산기</h1>
+          <HelpTip title="단가 (월)">
+            <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+              <div>콜봇: {fmtKRWwon(ECP_UNIT_KRW.callbotPerChannel)}/채널</div>
+              <div>챗봇: {fmtKRWwon(ECP_UNIT_KRW.chatbotPerChannel)}/채널</div>
+              <div>어드바이저: {fmtKRWwon(ECP_UNIT_KRW.advisorPerSeat)}/석</div>
+              <div>TA/QA/KMS: {fmtKRWwon(25_000)}/석</div>
+              <div>STT: {fmtKRWwon(ECP_UNIT_KRW.sttPerChannel)}/채널</div>
+              <div>TTS: {fmtKRWwon(ECP_UNIT_KRW.ttsPerChannel)}/채널</div>
+            </div>
+          </HelpTip>
+        </div>
+        <button type="button" onClick={saveDefaults} style={saveBtn()}>저장</button>
       </div>
 
       {/* 전체 할인률 */}
@@ -1240,3 +1493,14 @@ function Line({ label, value }: { label: React.ReactNode; value: number }) {
     </div>
   );
 }
+
+/* ★ 저장 버튼 스타일 */
+const saveBtn = (): React.CSSProperties => ({
+  padding: "10px 14px",
+  borderRadius: 10,
+  border: "1px solid #0ea5e9",
+  background: "#e0f2fe",
+  color: "#0c4a6e",
+  fontWeight: 800,
+  cursor: "pointer",
+});
