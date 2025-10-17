@@ -168,20 +168,22 @@ export default function PricingApp() {
 
         {/* 우측: 합계(월) */}
         <div style={{ ...container(), padding: 16 }}>
-          <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>합계(월)</h1>
-          <div style={{ fontSize: 14, color: "#334155", marginBottom: 8 }}>
-            아래 섹션과 연동된 최종 월 합계를 <b>원화</b>로 바로 보여줘요. (할인/환율/마진 반영)
-          </div>
+  <h1 style={{ ...title(), marginBottom: 8, fontSize: 24 }}>합계(월)</h1>
+  <div style={{ fontSize: 14, color: "#334155", marginBottom: 8 }}>
+    아래 섹션과 연동된 최종 월 합계를 <b>원화</b>로 바로 보여줘요. (할인/환율/마진 반영)
+  </div>
 
-          <QuickTotal
-            label="제네시스 총합계 (원) (토큰 사용 시 가격 변동 有)"
-            valueKRW={gTotalKRW}
-            subLabel="구독료 제외 "
-            subValueKRW={gTotalNoSubKRW}
-          />
-          <QuickTotal label="AWS 총합계 (원)" valueKRW={aTotalKRW} />
-          <QuickTotal label="ECP-AI 총합계 (원)" valueKRW={eTotalKRW} />
-        </div>
+  <QuickTotal
+    warn="정보 제한, 정확성 X, 참고용 가격"  // 🔴 박스 안 맨 위 빨간 줄
+    label="제네시스 총합계 (원) (토큰 사용 시 가격 변동 有)"
+    valueKRW={gTotalKRW}
+    subLabel="구독료 제외 "
+    subValueKRW={gTotalNoSubKRW}
+  />
+
+  <QuickTotal label="AWS 총합계 (원)" valueKRW={aTotalKRW} />
+  <QuickTotal label="ECP-AI 총합계 (원)" valueKRW={eTotalKRW} />
+</div>
       </div>
 
       {/* 3열 그리드 */}
@@ -639,6 +641,10 @@ function GenesysCalculator(props: {
 
       {/* 총합 */}
       <div style={resultBox()}>
+        {/* 🔴 경고문구 */}
+        <div style={{ fontSize: 15, color: '#dc2626', fontWeight: 800, marginBottom: 6 }}>
+         정보 제한, 정확성 X, 참고용 가격
+        </div>
         <h2>총 합계(월, 할인 적용): {fmtUSD0(calc.grandTotalMonthly)} ({fmtKRW(calc.grandTotalMonthly, exchangeRate)})</h2>
         <div style={{ fontSize: 14, fontWeight: 500, marginTop: 6, color: "#333" }}>
           (할인 전: {fmtUSD0(calc.preDiscountTotal)} / 할인율 {Math.max(0, Math.min(100, discountRate))}% 적용)
@@ -1488,11 +1494,13 @@ function QuickTotal({
   valueKRW,
   subLabel,
   subValueKRW,
+  warn, // 🔴 경고문구 한 줄(옵션)
 }: {
   label: string;
   valueKRW: number;
   subLabel?: string;
   subValueKRW?: number;
+  warn?: string; // 🔴 옵션
 }) {
   return (
     <div
@@ -1509,15 +1517,22 @@ function QuickTotal({
       }}
     >
       <div>
+        {/* 박스 내부 상단 경고문구 */}
+        {warn && (
+          <div style={{ fontSize: 14, color: "#dc2626", fontWeight: 800, marginBottom: 4 }}>
+            {warn}
+          </div>
+        )}
+
         <span style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{label}</span>
+
         {typeof subValueKRW === "number" && subLabel && (
-          <div
-            style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginTop: 6 }}
-          >
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginTop: 6 }}>
             └ <span>{subLabel}:</span> <span>{fmtKRWwon(subValueKRW)}</span>
           </div>
         )}
       </div>
+
       <span style={{ fontSize: 20, fontWeight: 900 }}>{fmtKRWwon(valueKRW)}</span>
     </div>
   );
