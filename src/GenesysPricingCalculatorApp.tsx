@@ -174,9 +174,9 @@ export default function PricingApp() {
           </div>
 
           <QuickTotal
-            label="제네시스 총합계 (원)"
+            label="제네시스 총합계 (원) (토큰 사용 시 가격 변동 有)"
             valueKRW={gTotalKRW}
-            subLabel="구독료 제외 (토큰 사용 시 가격 변동 有) "
+            subLabel="구독료 제외 "
             subValueKRW={gTotalNoSubKRW}
           />
           <QuickTotal label="AWS 총합계 (원)" valueKRW={aTotalKRW} />
