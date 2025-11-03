@@ -53,8 +53,8 @@ const AWS_RATE = {
   voicePerMinuteUSD: 0.038,
   taqaPerMinuteUSD: 0.033,
 
-  // 👈 [수정] Amazon Connect 제외 단가 추가 (0.006 -> 0.06 오타 수정)
-  chatbotPerSessionUSD_NoAC: 0.06,
+  // 👈 [수정] Amazon Connect 제외 단가 추가 
+  chatbotPerSessionUSD_NoAC: 0.006,
   voicePerMinuteUSD_NoAC: 0.02,
   taqaPerMinuteUSD_NoAC: 0.015,
 };
